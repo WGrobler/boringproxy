@@ -1,0 +1,4 @@
+# Ignore everything in home assisant config
+docker/client/examples/home-assistant/config/*
+# But not these files...
+!docker/client/examples/home-assistant/config/configuration.yaml
