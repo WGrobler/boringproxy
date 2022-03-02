@@ -15,7 +15,8 @@ type myCertConfig struct {
 }
 
 type ServerConfig struct {
-	adminDomain   string
+	webUiDomain   string
+	apiDomain     string
 	sshServerPort int
 	dbDir         string
 	printLogin    bool
@@ -24,6 +25,7 @@ type ServerConfig struct {
 	allowHttp     bool
 	publicIp      string
 	behindProxy   bool
+	disableWebUi  bool
 	myCertConfig  myCertConfig
 }
 
@@ -77,6 +79,9 @@ func getEnvAsBool(name string, defaultVal bool) bool {
 func SetServerConfig(flags []string) *ServerConfig {
 	flagSet := flag.NewFlagSet(os.Args[0], flag.ExitOnError)
 	adminDomain := flagSet.String("admin-domain", getEnv("BP_ADMIN_DOMAIN", ""), "Admin Domain")
+	webUiDomain := flagSet.String("webui-domain", getEnv("BP_WEB_UI_DOMAIN", ""), "Web UI Domain")
+	disableWebUi := flagSet.Bool("disable-webui", getEnvAsBool("BP_DISABLE_WEB_UI", false), "Disable WebUI")
+	apiDomain := flagSet.String("api-domain", getEnv("BP_API_DOMAIN", ""), "API Domain")
 	sshServerPort := flagSet.Int("ssh-server-port", getEnvAsInt("BP_SSH_SERVER_PORT", 22), "SSH Server Port")
 	dbDir := flagSet.String("db-dir", getEnv("BP_DB_DIR", ""), "Database file directory")
 	printLogin := flagSet.Bool("print-login", getEnvAsBool("BP_PRINT_LOGIN", false), "Prints admin login information")
@@ -88,11 +93,21 @@ func SetServerConfig(flags []string) *ServerConfig {
 	certDir := flagSet.String("cert-dir", getEnv("BP_CERT_DIR", ""), "TLS cert directory")
 	acmeEmail := flagSet.String("acme-email", getEnv("BP_ACME_EMAIL", ""), "Email for ACME (ie Let's Encrypt)")
 	defaultCA := flagSet.String("ca", getEnv("BP_CA", "production"), "Default ACME CA")
-	autoCerts := flagSet.Bool("autocert", getEnvAsBool("BP_AUTO_CERTS", false), "Enable/Disable auto certs")
+	autoCerts := flagSet.Bool("autocert", getEnvAsBool("BP_AUTO_CERTS", true), "Enable/Disable auto certs")
 
 	err := flagSet.Parse(flags)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "%s: parsing flags: %s\n", os.Args[0], err)
+	}
+
+	// Check if Web UI domain is set, if not set it to admin domain
+	if *webUiDomain == "" {
+		*webUiDomain = *adminDomain
+	}
+
+	// Check if API domain is set, if not set it to admin domain
+	if *apiDomain == "" {
+		*apiDomain = *adminDomain
 	}
 
 	var myCertConfig = &myCertConfig{
@@ -103,7 +118,8 @@ func SetServerConfig(flags []string) *ServerConfig {
 	}
 
 	var config = &ServerConfig{
-		adminDomain:   *adminDomain,
+		webUiDomain:   *webUiDomain,
+		apiDomain:     *apiDomain,
 		sshServerPort: *sshServerPort,
 		dbDir:         *dbDir,
 		printLogin:    *printLogin,
@@ -112,6 +128,7 @@ func SetServerConfig(flags []string) *ServerConfig {
 		allowHttp:     *allowHttp,
 		publicIp:      *publicIp,
 		behindProxy:   *behindProxy,
+		disableWebUi:  *disableWebUi,
 		myCertConfig:  *myCertConfig,
 	}
 

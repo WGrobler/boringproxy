@@ -13,7 +13,8 @@ import (
 var DBFolderPath string
 
 type Database struct {
-	AdminDomain string                         `json:"admin_domain"`
+	WebUiDomain string                         `json:"webui_domain"`
+	ApiDomain   string                         `json:"api_domain"`
 	Tokens      map[string]TokenData           `json:"tokens"`
 	Tunnels     map[string]Tunnel              `json:"tunnels"`
 	Users       map[string]User                `json:"users"`
@@ -105,19 +106,34 @@ func NewDatabase(path string) (*Database, error) {
 	return db, nil
 }
 
-func (d *Database) SetAdminDomain(adminDomain string) {
+func (d *Database) SetWebUiDomain(WebUiDomain string) {
 	d.mutex.Lock()
 	defer d.mutex.Unlock()
 
-	d.AdminDomain = adminDomain
+	d.WebUiDomain = WebUiDomain
 
 	d.persist()
 }
-func (d *Database) GetAdminDomain() string {
+func (d *Database) GetWebUiDomain() string {
 	d.mutex.Lock()
 	defer d.mutex.Unlock()
 
-	return d.AdminDomain
+	return d.WebUiDomain
+}
+
+func (d *Database) SetApiDomain(ApiDomain string) {
+	d.mutex.Lock()
+	defer d.mutex.Unlock()
+
+	d.ApiDomain = ApiDomain
+
+	d.persist()
+}
+func (d *Database) GetApiDomain() string {
+	d.mutex.Lock()
+	defer d.mutex.Unlock()
+
+	return d.ApiDomain
 }
 
 func (d *Database) SetDNSRequest(requestId string, request namedrop.DNSRequest) {

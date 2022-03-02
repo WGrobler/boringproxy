@@ -378,7 +378,7 @@ func (a *Api) CreateTunnel(tokenData TokenData, params url.Values) (*Tunnel, err
 		return nil, errors.New("Invalid tls-termination parameter")
 	}
 
-	sshServerAddr := a.db.GetAdminDomain()
+	sshServerAddr := a.db.GetApiDomain()
 	sshServerAddrParam := params.Get("ssh-server-addr")
 	if sshServerAddrParam != "" {
 		sshServerAddr = sshServerAddrParam

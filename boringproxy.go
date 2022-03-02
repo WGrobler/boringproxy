@@ -41,7 +41,7 @@ type Server struct {
 	httpListener *PassthroughListener
 }
 
-func Listen(config *ServerConfig)
+func Listen(config *ServerConfig) {
 	log.Println("Starting up")
 
 	db, err := NewDatabase(config.dbDir)
@@ -49,7 +49,7 @@ func Listen(config *ServerConfig)
 		log.Fatal(err)
 	}
 
-	namedropClient := namedrop.NewClient(db, db.GetAdminDomain(), "takingnames.io/namedrop")
+	namedropClient := namedrop.NewClient(db, db.GetApiDomain(), "takingnames.io/namedrop")
 
 	var ip string
 
@@ -101,33 +101,54 @@ func Listen(config *ServerConfig)
 		certmagic.DefaultACME.CA = config.myCertConfig.defaultCA
 	}
 
-	if *customCA != "" {
-		//	https://smallstep.com/blog/private-acme-server/
-		//	example: https://<domain>:<port>/acme/acme/directory
-		certmagic.DefaultACME.CA = *customCA
-	}
-
 	certConfig := certmagic.NewDefault()
 
-	if config.adminDomain != "" {
-		db.SetAdminDomain(config.adminDomain)
+	if config.webUiDomain != "" {
+		db.SetWebUiDomain(config.webUiDomain)
+	}
+	if config.apiDomain != "" {
+		db.SetApiDomain(config.apiDomain)
 	}
 
-	adminDomain := db.GetAdminDomain()
-
-	if adminDomain == "" {
-
+	webUiDomain := db.GetWebUiDomain()
+	apiDomain := db.GetApiDomain()
+	if webUiDomain == "" && apiDomain == "" {
 		err = setAdminDomain(certConfig, db, namedropClient, autoCerts)
 		if err != nil {
 			log.Fatal(err)
 		}
-	} else {
-		if autoCerts {
-			err = certConfig.ManageSync(context.Background(), []string{adminDomain})
+	}
+	if webUiDomain == "" && apiDomain != "" {
+		db.SetWebUiDomain(apiDomain)
+	}
+	if webUiDomain != "" && apiDomain == "" {
+		db.SetApiDomain(webUiDomain)
+	}
+
+	webUiDomain = db.GetWebUiDomain()
+	apiDomain = db.GetApiDomain()
+	if autoCerts {
+		if webUiDomain == apiDomain && webUiDomain != "" {
+			err = certConfig.ManageSync(context.Background(), []string{webUiDomain})
 			if err != nil {
 				log.Fatal(err)
 			}
-			log.Print(fmt.Sprintf("Successfully acquired certificate for admin domain (%s)", adminDomain))
+			log.Print(fmt.Sprintf("Successfully acquired certificate for web UI & api domain (%s)", webUiDomain))
+		} else {
+			if webUiDomain != "" {
+				err = certConfig.ManageSync(context.Background(), []string{webUiDomain})
+				if err != nil {
+					log.Fatal(err)
+				}
+				log.Print(fmt.Sprintf("Successfully acquired certificate for web UI domain (%s)", webUiDomain))
+			}
+			if apiDomain != "" {
+				err = certConfig.ManageSync(context.Background(), []string{apiDomain})
+				if err != nil {
+					log.Fatal(err)
+				}
+				log.Print(fmt.Sprintf("Successfully acquired certificate for API Domain (%s)", apiDomain))
+			}
 		}
 	}
 
@@ -145,7 +166,7 @@ func Listen(config *ServerConfig)
 	if config.printLogin {
 		for token, tokenData := range db.GetTokens() {
 			if tokenData.Owner == "admin" && tokenData.Client == "" {
-				printLoginInfo(token, db.GetAdminDomain(), config.httpsPort)
+				printLoginInfo(token, db.GetWebUiDomain(), config.httpsPort)
 				break
 			}
 		}
@@ -243,8 +264,8 @@ func Listen(config *ServerConfig)
 
 			fqdn := host + "." + domain
 
-			if db.GetAdminDomain() == "" {
-				db.SetAdminDomain(fqdn)
+			if db.GetWebUiDomain() == "" {
+				db.SetWebUiDomain(fqdn)
 				namedropClient.SetDomain(fqdn)
 
 				if autoCerts {
@@ -269,15 +290,40 @@ func Listen(config *ServerConfig)
 
 				http.Redirect(w, r, url, 303)
 			} else {
-				adminDomain := db.GetAdminDomain()
-				http.Redirect(w, r, fmt.Sprintf("https://%s/edit-tunnel?domain=%s", adminDomain, fqdn), 303)
+				webUiDomain := db.GetWebUiDomain()
+				http.Redirect(w, r, fmt.Sprintf("https://%s/edit-tunnel?domain=%s", webUiDomain, fqdn), 303)
 			}
 
-		} else if hostDomain == db.GetAdminDomain() {
+			// check if Web UI and API is same domain, if it is, continue like normal
+		} else if hostDomain == db.GetWebUiDomain() && hostDomain == db.GetApiDomain() {
+			webUiHandler.handleWebUiRequest(w, r)
+			// if web Ui and API is not the same, handle seperatly
+		} else if hostDomain == db.GetWebUiDomain() {
+			// if Web UI has api call, reject
+			if strings.HasPrefix(r.URL.Path, "/api/") {
+				errMessage := "Not API domain"
+				w.WriteHeader(500)
+				io.WriteString(w, errMessage)
+				return
+			} else {
+				if config.disableWebUi {
+					errMessage := "Web UI disabled"
+					w.WriteHeader(500)
+					io.WriteString(w, errMessage)
+					return
+				} else {
+					webUiHandler.handleWebUiRequest(w, r)
+				}
+
+			}
+		} else if hostDomain == db.GetApiDomain() {
 			if strings.HasPrefix(r.URL.Path, "/api/") {
 				http.StripPrefix("/api", api).ServeHTTP(w, r)
 			} else {
-				webUiHandler.handleWebUiRequest(w, r)
+				errMessage := "Invalid API request"
+				w.WriteHeader(404)
+				io.WriteString(w, errMessage)
+				return
 			}
 		} else {
 
@@ -399,7 +445,8 @@ func setAdminDomain(certConfig *certmagic.Config, db *Database, namedropClient *
 			}
 		}
 
-		db.SetAdminDomain(adminDomain)
+		db.SetWebUiDomain(adminDomain)
+		db.SetApiDomain(adminDomain)
 	case "2":
 
 		log.Println("Get bootstrap domain")
@@ -427,12 +474,12 @@ func prompt(promptText string) string {
 	return strings.TrimSpace(text)
 }
 
-func printLoginInfo(token, adminDomain string, httpsPort int) {
+func printLoginInfo(token, WebUiDomain string, httpsPort int) {
 	var url string
 	if httpsPort != 443 {
-		url = fmt.Sprintf("https://%s:%d/login?access_token=%s", adminDomain, httpsPort, token)
+		url = fmt.Sprintf("https://%s:%d/login?access_token=%s", WebUiDomain, httpsPort, token)
 	} else {
-		url = fmt.Sprintf("https://%s/login?access_token=%s", adminDomain, token)
+		url = fmt.Sprintf("https://%s/login?access_token=%s", WebUiDomain, token)
 	}
 	log.Println(fmt.Sprintf("Admin login link: %s", url))
 	qrterminal.GenerateHalfBlock(url, qrterminal.L, os.Stdout)

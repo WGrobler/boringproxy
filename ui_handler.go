@@ -3,12 +3,15 @@ package boringproxy
 import (
 	"embed"
 	"encoding/base64"
+
 	//"encoding/json"
 	"fmt"
-	qrcode "github.com/skip2/go-qrcode"
 	"html/template"
 	"io"
 	"net/http"
+
+	qrcode "github.com/skip2/go-qrcode"
+
 	//"net/url"
 	//"os"
 	"strings"
@@ -359,8 +362,8 @@ func (h *WebUiHandler) handleTokens(w http.ResponseWriter, r *http.Request, user
 
 		qrCodes := make(map[string]template.URL)
 		for token := range tokens {
-			adminDomain := h.db.GetAdminDomain()
-			loginUrl := fmt.Sprintf("https://%s/login?access_token=%s", adminDomain, token)
+			webUiDomain := h.db.GetWebUiDomain()
+			loginUrl := fmt.Sprintf("https://%s/login?access_token=%s", webUiDomain, token)
 
 			var png []byte
 			png, err := qrcode.Encode(loginUrl, qrcode.Medium, 256)
