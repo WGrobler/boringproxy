@@ -4,7 +4,6 @@ import (
 	"bufio"
 	"context"
 	"crypto/tls"
-	"flag"
 	"fmt"
 	"io"
 	"log"
@@ -42,30 +41,10 @@ type Server struct {
 	httpListener *PassthroughListener
 }
 
-func Listen() {
-	flagSet := flag.NewFlagSet(os.Args[0], flag.ExitOnError)
-	newAdminDomain := flagSet.String("admin-domain", "", "Admin Domain")
-	sshServerPort := flagSet.Int("ssh-server-port", 22, "SSH Server Port")
-	dbDir := flagSet.String("db-dir", "", "Database file directory")
-	certDir := flagSet.String("cert-dir", "", "TLS cert directory")
-	printLogin := flagSet.Bool("print-login", false, "Prints admin login information")
-	httpPort := flagSet.Int("http-port", 80, "HTTP (insecure) port")
-	httpsPort := flagSet.Int("https-port", 443, "HTTPS (secure) port")
-	allowHttp := flagSet.Bool("allow-http", false, "Allow unencrypted (HTTP) requests")
-	publicIp := flagSet.String("public-ip", "", "Public IP")
-	behindProxy := flagSet.Bool("behind-proxy", false, "Whether we're running behind another reverse proxy")
-	acmeEmail := flagSet.String("acme-email", "", "Email for ACME (ie Let's Encrypt)")
-	acmeUseStaging := flagSet.Bool("acme-use-staging", false, "Use ACME (ie Let's Encrypt) staging servers")
-	acceptCATerms := flagSet.Bool("accept-ca-terms", false, "Automatically accept CA terms")
-	customCA := flagSet.String("custom-ca", "", "Custom ACME CA")
-	err := flagSet.Parse(os.Args[2:])
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "%s: parsing flags: %s\n", os.Args[0], err)
-	}
-
+func Listen(config *ServerConfig)
 	log.Println("Starting up")
 
-	db, err := NewDatabase(*dbDir)
+	db, err := NewDatabase(config.dbDir)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -74,8 +53,8 @@ func Listen() {
 
 	var ip string
 
-	if *publicIp != "" {
-		ip = *publicIp
+	if config.publicIp != "" {
+		ip = config.publicIp
 	} else {
 		ip, err = namedropClient.GetPublicIp()
 		if err != nil {
@@ -83,39 +62,43 @@ func Listen() {
 		}
 	}
 
-	err = namedrop.CheckPublicAddress(ip, *httpPort)
+	err = namedrop.CheckPublicAddress(ip, config.httpPort)
 	if err != nil {
-		fmt.Printf("WARNING: Failed to access %s:%d from the internet\n", ip, *httpPort)
+		fmt.Printf("WARNING: Failed to access %s:%d from the internet\n", ip, config.httpPort)
 	}
 
-	err = namedrop.CheckPublicAddress(ip, *httpsPort)
+	err = namedrop.CheckPublicAddress(ip, config.httpsPort)
 	if err != nil {
-		fmt.Printf("WARNING: Failed to access %s:%d from the internet\n", ip, *httpsPort)
+		fmt.Printf("WARNING: Failed to access %s:%d from the internet\n", ip, config.httpsPort)
 	}
 
-	autoCerts := true
-	if *httpPort != 80 || *httpsPort != 443 {
-		fmt.Printf("WARNING: LetsEncrypt only supports HTTP/HTTPS ports 80/443. You are using %d/%d. Disabling automatic certificate management\n", *httpPort, *httpsPort)
+	var autoCerts bool
+	if config.httpPort != 80 || config.httpsPort != 443 {
+		fmt.Printf("WARNING: LetsEncrypt only supports HTTP/HTTPS ports 80/443. You are using %d/%d. Disabling automatic certificate management\n", config.httpPort, config.httpsPort)
 		autoCerts = false
+	} else {
+		autoCerts = config.myCertConfig.autoCerts
 	}
 
-	if *certDir != "" {
-		certmagic.Default.Storage = &certmagic.FileStorage{*certDir}
-	}
-	//certmagic.DefaultACME.DisableHTTPChallenge = true
-	//certmagic.DefaultACME.DisableTLSALPNChallenge = true
-
-	if *acmeEmail != "" {
-		certmagic.DefaultACME.Email = *acmeEmail
+	if config.myCertConfig.certDir != "" {
+		certmagic.Default.Storage = &certmagic.FileStorage{config.myCertConfig.certDir}
 	}
 
-	if *acceptCATerms {
+	if config.myCertConfig.acmeEmail != "" {
+		certmagic.DefaultACME.Email = config.myCertConfig.acmeEmail
 		certmagic.DefaultACME.Agreed = true
-		log.Print(fmt.Sprintf("Automatic agreement to CA terms with email (%s)", *acmeEmail))
+		log.Print(fmt.Sprintf("Automatic agreement to CA terms with email (%s)", config.myCertConfig.acmeEmail))
 	}
 
-	if *acmeUseStaging {
+	switch config.myCertConfig.defaultCA {
+	case "production":
+		certmagic.DefaultACME.CA = certmagic.LetsEncryptProductionCA
+
+	case "staging":
 		certmagic.DefaultACME.CA = certmagic.LetsEncryptStagingCA
+
+	default:
+		certmagic.DefaultACME.CA = config.myCertConfig.defaultCA
 	}
 
 	if *customCA != "" {
@@ -126,8 +109,8 @@ func Listen() {
 
 	certConfig := certmagic.NewDefault()
 
-	if *newAdminDomain != "" {
-		db.SetAdminDomain(*newAdminDomain)
+	if config.adminDomain != "" {
+		db.SetAdminDomain(config.adminDomain)
 	}
 
 	adminDomain := db.GetAdminDomain()
@@ -159,29 +142,29 @@ func Listen() {
 
 	}
 
-	if *printLogin {
+	if config.printLogin {
 		for token, tokenData := range db.GetTokens() {
 			if tokenData.Owner == "admin" && tokenData.Client == "" {
-				printLoginInfo(token, db.GetAdminDomain(), *httpsPort)
+				printLoginInfo(token, db.GetAdminDomain(), config.httpsPort)
 				break
 			}
 		}
 	}
 
-	config := &Config{
-		SshServerPort:  *sshServerPort,
+	TunnelManagerConfig := &Config{
+		SshServerPort:  config.sshServerPort,
 		PublicIp:       ip,
 		namedropClient: namedropClient,
 		autoCerts:      autoCerts,
 	}
 
-	tunMan := NewTunnelManager(config, db, certConfig)
+	tunMan := NewTunnelManager(TunnelManagerConfig, db, certConfig)
 
 	auth := NewAuth(db)
 
-	api := NewApi(config, db, auth, tunMan)
+	api := NewApi(TunnelManagerConfig, db, auth, tunMan)
 
-	webUiHandler := NewWebUiHandler(config, db, api, auth)
+	webUiHandler := NewWebUiHandler(TunnelManagerConfig, db, api, auth)
 
 	httpClient := &http.Client{
 		// Don't follow redirects
@@ -239,7 +222,7 @@ func Listen() {
 			host := namedropTokenData.Scopes[0].Host
 
 			recordType := "AAAA"
-			if IsIPv4(config.PublicIp) {
+			if IsIPv4(TunnelManagerConfig.PublicIp) {
 				recordType = "A"
 			}
 
@@ -247,7 +230,7 @@ func Listen() {
 				Domain: domain,
 				Host:   host,
 				Type:   recordType,
-				Value:  config.PublicIp,
+				Value:  TunnelManagerConfig.PublicIp,
 				TTL:    300,
 			}
 
@@ -306,23 +289,23 @@ func Listen() {
 				return
 			}
 
-			proxyRequest(w, r, tunnel, httpClient, "localhost", tunnel.TunnelPort, *behindProxy)
+			proxyRequest(w, r, tunnel, httpClient, "localhost", tunnel.TunnelPort, config.behindProxy)
 		}
 	})
 
 	go func() {
 
-		if *allowHttp {
-			if err := http.ListenAndServe(fmt.Sprintf(":%d", *httpPort), nil); err != nil {
+		if config.allowHttp {
+			if err := http.ListenAndServe(fmt.Sprintf(":%d", config.httpPort), nil); err != nil {
 				log.Fatalf("ListenAndServe error: %v", err)
 			}
 		} else {
 			redirectTLS := func(w http.ResponseWriter, r *http.Request) {
-				url := fmt.Sprintf("https://%s:%d%s", r.Host, *httpsPort, r.RequestURI)
+				url := fmt.Sprintf("https://%s:%d%s", r.Host, config.httpsPort, r.RequestURI)
 				http.Redirect(w, r, url, http.StatusMovedPermanently)
 			}
 
-			if err := http.ListenAndServe(fmt.Sprintf(":%d", *httpPort), http.HandlerFunc(redirectTLS)); err != nil {
+			if err := http.ListenAndServe(fmt.Sprintf(":%d", config.httpPort), http.HandlerFunc(redirectTLS)); err != nil {
 				log.Fatalf("ListenAndServe error: %v", err)
 			}
 		}
@@ -331,7 +314,7 @@ func Listen() {
 
 	go http.Serve(tlsListener, nil)
 
-	listener, err := net.Listen("tcp", fmt.Sprintf(":%d", *httpsPort))
+	listener, err := net.Listen("tcp", fmt.Sprintf(":%d", config.httpsPort))
 	if err != nil {
 		log.Fatal(err)
 	}
