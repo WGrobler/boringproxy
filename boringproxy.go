@@ -41,8 +41,7 @@ type Server struct {
 	httpListener *PassthroughListener
 }
 
-func Listen(config *ServerConfig) {
-
+func Listen(config *ServerConfig)
 	log.Println("Starting up")
 
 	db, err := NewDatabase(config.dbDir)
@@ -100,6 +99,12 @@ func Listen(config *ServerConfig) {
 
 	default:
 		certmagic.DefaultACME.CA = config.myCertConfig.defaultCA
+	}
+
+	if *customCA != "" {
+		//	https://smallstep.com/blog/private-acme-server/
+		//	example: https://<domain>:<port>/acme/acme/directory
+		certmagic.DefaultACME.CA = *customCA
 	}
 
 	certConfig := certmagic.NewDefault()
